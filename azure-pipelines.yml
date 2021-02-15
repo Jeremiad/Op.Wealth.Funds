@@ -1,0 +1,71 @@
+trigger:
+- main
+
+pool:
+  name: 'Builders'
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  containerManager: 'docker'
+  mainProject: 'Op.Wealth.Funds'
+  mainContainerFriendlyName: 'op-wealth-funds'
+  testsProject: 'Op.Wealth.Funds.Tests'
+  testsContainerFriendlyName: 'op-wealth-funds-tests'
+
+stages:
+  - stage: Build
+    displayName: Build on containers
+    pool:
+      name: 'Builders'
+      demands: 
+        - docker
+    jobs:
+      - job: Build
+        steps:
+        - task: CmdLine@2
+          displayName: Test build on containers
+          inputs:
+            script: '$(containerManager) build --pull --force-rm -f ./src/$(mainProject)/Dockerfile --tag $(mainContainerFriendlyName):latest --tag $(mainContainerFriendlyName):$(Build.BuildNumber) .'
+
+  - stage: Tests
+    displayName: Run tests
+    dependsOn: Build
+    condition: succeeded()
+    pool:
+      name: 'Builders'
+      demands:
+        - dotnet
+    jobs:
+    - job: Tests
+      steps:
+      - task: DotNetCoreCLI@2
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+          feedsToUse: 'select'
+      - task: DotNetCoreCLI@2
+        inputs:
+          command: 'test'
+          projects: 'src/$(testsProject)/**/*.csproj'
+          arguments: '-c $(buildConfiguration) /p:CollectCoverage=true /p:CoverletOutputFormat=coberturva --collect "Code coverage"'
+      - task: PublishTestResults@2
+        inputs:
+          testResultsFormat: 'NUnit'
+          testResultsFiles: '**/TEST-*.xml'
+    # Disabled because code coverage requires Windows
+    - job: DTests
+      steps:
+      - task: CmdLine@2
+        displayName: 'Build docker image'
+        enabled: "false"
+        inputs:
+          script: '$(containerManager) build --pull --force-rm -f ./src/$(testsProject)/Dockerfile --tag $(testsContainerFriendlyName):latest --tag $(testsContainerFriendlyName):$(Build.BuildNumber) .'
+
+      - task: CmdLine@2
+        displayName: Run tests - Not fully working
+        enabled: "false"
+        inputs:
+          script: 'mkdir -p "$(pwd)"/linux-TestResults && $(containerManager) run --rm --mount type=bind,source="$(pwd)"/linux-TestResults,target=/src/TestResults $(testsContainerFriendlyName):latest dotnet test /src/$(testsProject)/$(testsProject).csproj -c $(buildConfiguration) /p:CollectCoverage=true /p:CoverletOutputFormat=coberturva --collect "Code coverage"'
+          failOnStderr: false
